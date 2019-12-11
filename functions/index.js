@@ -29,51 +29,55 @@ exports.dialogflowFirebaseFulfillment = functions.https.onRequest(
     async function handleNextPassFromStop(agent) {
       const { Stop, Line, Transport } = agent.parameters;
 
-      const res = await TBMClient.getLine(`line:TBC:${Line}`);
-      const { routes } = res;
-      const stops = routes.reduce((stops, route) => {
-        const stopPoints = route.stopPoints.filter(
-          stopPoints => stopPoints.name === Stop
-        );
-        stops.push(...stopPoints);
-        return stops;
-      }, []);
-      const nextPassPromises = stops.map(async stop => {
-        const characterIndex = stop.id.lastIndexOf(":");
-        const id = stop.id.substring(characterIndex + 1);
-        return await TBMClient.nextPass(id, Line);
-      });
-      const nextPass = await Promise.all(nextPassPromises);
-      const nextPassesValues = Object.values(nextPass).reduce(
-        (nextPasses, currentNextPass) => {
-          const destinationNextPass = Object.values(currentNextPass)[0];
-          const infoDestination = destinationNextPass.reduce(
-            (info, nextPassInfo) => {
-              const { destinationName, waitTimeText } = nextPassInfo;
-              if (info[destinationName]) {
-                info[destinationName].push(waitTimeText);
-              } else {
-                info[destinationName] = [waitTimeText];
-              }
-              return info;
-            },
-            {}
+      try {
+        const res = await TBMClient.getLine(`line:TBC:${Line}`);
+        const { routes } = res;
+        const stops = routes.reduce((stops, route) => {
+          const stopPoints = route.stopPoints.filter(
+            stopPoints => stopPoints.name === Stop
           );
-          nextPasses.push(infoDestination);
-          return nextPasses;
-        },
-        []
-      );
-      nextPassesValues.forEach(nextPass => {
-        const [[destinationName, destinationNextPasses]] = Object.entries(
-          nextPass
+          stops.push(...stopPoints);
+          return stops;
+        }, []);
+        const nextPassPromises = stops.map(async stop => {
+          const characterIndex = stop.id.lastIndexOf(":");
+          const id = stop.id.substring(characterIndex + 1);
+          return await TBMClient.nextPass(id, Line);
+        });
+        const nextPass = await Promise.all(nextPassPromises);
+        const nextPassesValues = Object.values(nextPass).reduce(
+          (nextPasses, currentNextPass) => {
+            const destinationNextPass = Object.values(currentNextPass)[0];
+            const infoDestination = destinationNextPass.reduce(
+              (info, nextPassInfo) => {
+                const { destinationName, waitTimeText } = nextPassInfo;
+                if (info[destinationName]) {
+                  info[destinationName].push(waitTimeText);
+                } else {
+                  info[destinationName] = [waitTimeText];
+                }
+                return info;
+              },
+              {}
+            );
+            nextPasses.push(infoDestination);
+            return nextPasses;
+          },
+          []
         );
-        agent.add(
-          `Les prochains horaires pour ${destinationName} sont dans ${destinationNextPasses.join(
-            " et "
-          )}`
-        );
-      });
+        nextPassesValues.forEach(nextPass => {
+          const [[destinationName, destinationNextPasses]] = Object.entries(
+            nextPass
+          );
+          agent.add(
+            `Les prochains horaires pour ${destinationName} sont dans ${destinationNextPasses.join(
+              " et "
+            )}`
+          );
+        });
+      } catch (error) {
+        console.error(error);
+      }
     }
 
     // // Uncomment and edit to make your own intent handler
