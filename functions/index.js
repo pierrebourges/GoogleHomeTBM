@@ -33,9 +33,10 @@ exports.dialogflowFirebaseFulfillment = functions.https.onRequest(
         const res = await TBMClient.getLine(`line:TBC:${Line}`);
         const { routes } = res;
         const stops = routes.reduce((stops, route) => {
-          const stopPoints = route.stopPoints.filter(
-            stopPoints => stopPoints.name === Stop
-          );
+          const stopPoints = route.stopPoints.filter(stopPoints => {
+            const stopRegex = new RegExp(`.*${Stop}.*`, "i");
+            return stopRegex.test(stopPoints.name);
+          });
           stops.push(...stopPoints);
           return stops;
         }, []);
@@ -47,7 +48,11 @@ exports.dialogflowFirebaseFulfillment = functions.https.onRequest(
         const nextPass = await Promise.all(nextPassPromises);
         const nextPassesValues = Object.values(nextPass).reduce(
           (nextPasses, currentNextPass) => {
-            const destinationNextPass = Object.values(currentNextPass)[0];
+            const currentNextPassValues = Object.values(currentNextPass);
+            const [destinationNextPass] = currentNextPassValues;
+            if (!destinationNextPass) {
+              return nextPasses;
+            }
             const infoDestination = destinationNextPass.reduce(
               (info, nextPassInfo) => {
                 const { destinationName, waitTimeText } = nextPassInfo;
@@ -65,12 +70,19 @@ exports.dialogflowFirebaseFulfillment = functions.https.onRequest(
           },
           []
         );
+        if (nextPassesValues.length === 0) {
+          agent.add(
+            `Les prochains passages à l'arret ${Stop} ne sont pas disponibles.`
+          );
+        }
         nextPassesValues.forEach(nextPass => {
           const [[destinationName, destinationNextPasses]] = Object.entries(
             nextPass
           );
+          const conjugationBeVerb =
+            destinationNextPasses.length > 1 ? "sont" : "est";
           agent.add(
-            `Les prochains horaires pour ${destinationName} sont dans ${destinationNextPasses.join(
+            `Les prochains passages à l'arret ${Stop} vers ${destinationName} ${conjugationBeVerb} dans ${destinationNextPasses.join(
               " et "
             )}`
           );
