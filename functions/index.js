@@ -30,7 +30,15 @@ exports.dialogflowFirebaseFulfillment = functions.https.onRequest(
       const { Stop, Line, Transport } = agent.parameters;
 
       try {
-        const res = await TBMClient.getLine(`line:TBC:${Line}`);
+        let transportString = "TBC";
+        if (
+          ["59", "60", "61", "62"].includes(lineNumber => lineNumber === Line)
+        ) {
+          transportString = "TBT";
+        }
+        console.log(transportString);
+
+        const res = await TBMClient.getLine(`line:${transportString}:${Line}`);
         const { routes } = res;
         const stops = routes.reduce((stops, route) => {
           const stopPoints = route.stopPoints.filter(stopPoints => {
