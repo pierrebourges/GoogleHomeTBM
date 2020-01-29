@@ -31,15 +31,17 @@ exports.dialogflowFirebaseFulfillment = functions.https.onRequest(
 
       try {
         let transportString = "TBC";
-        if (
-          ["59", "60", "61", "62"].includes(lineNumber => lineNumber === Line)
-        ) {
+        const lineDict = { "59": "A", "60": "B", "61": "C", "62": "D" };
+        if (Object.keys(lineDict).includes(Line)) {
           transportString = "TBT";
         }
-        console.log(transportString);
 
         const res = await TBMClient.getLine(`line:${transportString}:${Line}`);
         const { routes } = res;
+        let codeNumber = Line;
+        if (Object.keys(lineDict).includes(Line)) {
+          codeNumber = lineDict[Line];
+        }
         const stops = routes.reduce((stops, route) => {
           const stopPoints = route.stopPoints.filter(stopPoints => {
             const stopRegex = new RegExp(`.*${Stop}.*`, "i");
@@ -51,7 +53,7 @@ exports.dialogflowFirebaseFulfillment = functions.https.onRequest(
         const nextPassPromises = stops.map(async stop => {
           const characterIndex = stop.id.lastIndexOf(":");
           const id = stop.id.substring(characterIndex + 1);
-          return await TBMClient.nextPass(id, Line);
+          return await TBMClient.nextPass(id, codeNumber);
         });
         const nextPass = await Promise.all(nextPassPromises);
         const nextPassesValues = Object.values(nextPass).reduce(
