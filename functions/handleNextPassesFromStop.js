@@ -1,7 +1,50 @@
 const { TBMClient } = require("infotbm-client");
+const { Payload } = require("dialogflow-fulfillment");
 
 async function handleNextPassFromStop(agent) {
   const { Stop, Line, Transport } = agent.parameters;
+
+  const formatTextToSpeech = text => {
+    let stopToSpeech = `Les prochains passages à l'arret ${Stop}:\n\n`;
+    const destinationTimes = text
+      .map(nextPass =>
+        nextPass
+          .map(destinationText => {
+            const [destinationTextEntries] = Object.entries(destinationText);
+            const [
+              destinationName,
+              destinationNextPasses
+            ] = destinationTextEntries;
+            const conjugationBeVerb =
+              destinationNextPasses.length > 1 ? "sont" : "est";
+            return `Vers ${destinationName} ${conjugationBeVerb} dans ${destinationNextPasses.join(
+              " et "
+            )}.`;
+          })
+          .join("\n\n")
+      )
+      .join("\n\n");
+    return stopToSpeech + destinationTimes;
+  };
+
+  const formatDisplayText = text => {
+    const stop = `Arrêt: ${Stop}.\n`;
+    const destinationPasses = text
+      .map(nextPass =>
+        nextPass
+          .map(destinationText => {
+            const [[destinationName, destinationNextPasses]] = Object.entries(
+              destinationText
+            );
+            return `Destination ${destinationName}: ${destinationNextPasses.join(
+              ", "
+            )}.`;
+          })
+          .join("\n\n")
+      )
+      .join("\n\n");
+    return stop + destinationPasses;
+  };
 
   try {
     let transportString = "TBC";
@@ -33,44 +76,50 @@ async function handleNextPassFromStop(agent) {
     const nextPassesValues = Object.values(nextPass).reduce(
       (nextPasses, currentNextPass) => {
         const currentNextPassValues = Object.values(currentNextPass);
-        const [destinationNextPass] = currentNextPassValues;
-        if (!destinationNextPass) {
+        if (currentNextPassValues.length === 0) {
           return nextPasses;
         }
-        const infoDestination = destinationNextPass.reduce(
-          (info, nextPassInfo) => {
-            const { destinationName, waitTimeText } = nextPassInfo;
-            if (info[destinationName]) {
-              info[destinationName].push(waitTimeText);
-            } else {
-              info[destinationName] = [waitTimeText];
-            }
-            return info;
-          },
-          {}
+        const infoDestinations = currentNextPassValues.map(
+          destinationNextPass =>
+            destinationNextPass.reduce((info, nextPassInfo) => {
+              const { destinationName, waitTimeText } = nextPassInfo;
+              if (info[destinationName]) {
+                info[destinationName].push(waitTimeText);
+              } else {
+                info[destinationName] = [waitTimeText];
+              }
+              return info;
+            }, {})
         );
-        nextPasses.push(infoDestination);
+        nextPasses.push(infoDestinations);
         return nextPasses;
       },
       []
     );
+
     if (nextPassesValues.length === 0) {
       agent.add(
         `Les prochains passages à l'arret ${Stop} ne sont pas disponibles.`
       );
     }
-    nextPassesValues.forEach(nextPass => {
-      const [[destinationName, destinationNextPasses]] = Object.entries(
-        nextPass
-      );
-      const conjugationBeVerb =
-        destinationNextPasses.length > 1 ? "sont" : "est";
-      agent.add(
-        `Les prochains passages à l'arret ${Stop} vers ${destinationName} ${conjugationBeVerb} dans ${destinationNextPasses.join(
-          " et "
-        )}`
-      );
+
+    const payload = new Payload("ACTIONS_ON_GOOGLE", {
+      expectUserResponse: false,
+      isSsml: false,
+      noInputPrompts: [],
+      richResponse: {
+        items: [
+          {
+            simpleResponse: {
+              textToSpeech: formatTextToSpeech(nextPassesValues),
+              displayText: formatDisplayText(nextPassesValues)
+            }
+          }
+        ]
+      }
     });
+
+    agent.add(payload);
   } catch (error) {
     console.error(error);
   }
