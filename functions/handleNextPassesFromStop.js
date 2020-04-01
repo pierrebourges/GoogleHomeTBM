@@ -1,104 +1,128 @@
 const { TBMClient } = require("infotbm-client");
 const { Payload } = require("dialogflow-fulfillment");
 
+const lineDict = { "59": "A", "60": "B", "61": "C", "62": "D" };
+
+const formatTextToSpeech = (text, stop) => {
+  let stopToSpeech = `Les prochains passages à l'arret ${stop}:\n\n`;
+  const destinationTimes = text
+    .map(nextPass =>
+      nextPass
+        .map(destinationText => {
+          const [destinationTextEntries] = Object.entries(destinationText);
+          const [
+            destinationName,
+            destinationNextPasses
+          ] = destinationTextEntries;
+          const conjugationBeVerb =
+            destinationNextPasses.length > 1 ? "sont" : "est";
+          return `Vers ${destinationName.toLowerCase()} ${conjugationBeVerb} dans ${destinationNextPasses.join(
+            " et "
+          )}.`;
+        })
+        .join("\n\n")
+    )
+    .join("\n\n");
+  return stopToSpeech + destinationTimes;
+};
+
+const formatDisplayText = (text, stop) => {
+  const stopString = `Arrêt: ${stop}.\n`;
+  const destinationPasses = text
+    .map(nextPass =>
+      nextPass
+        .map(destinationText => {
+          const [[destinationName, destinationNextPasses]] = Object.entries(
+            destinationText
+          );
+          return `Destination ${destinationName}: ${destinationNextPasses.join(
+            ", "
+          )}.`;
+        })
+        .join("\n\n")
+    )
+    .join("\n\n");
+  return stopString + destinationPasses;
+};
+
+const getTransportStringForLine = line => {
+  let transportString = "TBC";
+  if (Object.keys(lineDict).includes(line)) {
+    transportString = "TBT";
+  }
+  return transportString;
+};
+
+const getCodeNumberForLine = line => {
+  let codeNumber = line;
+  if (Object.keys(lineDict).includes(line)) {
+    codeNumber = lineDict[line];
+  }
+  return codeNumber;
+};
+
+const getStopsFromRoutes = (routes, stop) => {
+  const filterStop = stopPoints => {
+    const stopRegex = new RegExp(`.*${stop}.*`, "i");
+    return stopRegex.test(stopPoints.name);
+  };
+
+  return routes.reduce((stops, route) => {
+    const stopPoints = route.stopPoints.filter(filterStop);
+    return stops.concat(stopPoints);
+  }, []);
+};
+
+const getNextPassagesFromStops = async (line, stops) => {
+  const codeNumber = getCodeNumberForLine(line);
+
+  const nextPassPromises = stops.map(async stop => {
+    const characterIndex = stop.id.lastIndexOf(":");
+    const id = stop.id.substring(characterIndex + 1);
+    return await TBMClient.nextPass(id, codeNumber);
+  });
+  const nextPass = await Promise.all(nextPassPromises);
+  return Object.values(nextPass).reduce((nextPassages, currentNextPass) => {
+    const currentNextPassValues = Object.values(currentNextPass);
+    if (currentNextPassValues.length === 0) {
+      return nextPassages;
+    }
+    const infoDestinations = currentNextPassValues.map(destinationNextPass =>
+      destinationNextPass.reduce((info, nextPassInfo) => {
+        const { destinationName, waitTimeText } = nextPassInfo;
+        if (info[destinationName]) {
+          info[destinationName].push(waitTimeText);
+        } else {
+          info[destinationName] = [waitTimeText];
+        }
+        return info;
+      }, {})
+    );
+    nextPassages.push(infoDestinations);
+    return nextPassages;
+  }, []);
+};
+
 async function handleNextPassFromStop(agent) {
-  const { Stop, Line, Transport } = agent.parameters;
-
-  const formatTextToSpeech = text => {
-    let stopToSpeech = `Les prochains passages à l'arret ${Stop}:\n\n`;
-    const destinationTimes = text
-      .map(nextPass =>
-        nextPass
-          .map(destinationText => {
-            const [destinationTextEntries] = Object.entries(destinationText);
-            const [
-              destinationName,
-              destinationNextPasses
-            ] = destinationTextEntries;
-            const conjugationBeVerb =
-              destinationNextPasses.length > 1 ? "sont" : "est";
-            return `Vers ${destinationName} ${conjugationBeVerb} dans ${destinationNextPasses.join(
-              " et "
-            )}.`;
-          })
-          .join("\n\n")
-      )
-      .join("\n\n");
-    return stopToSpeech + destinationTimes;
-  };
-
-  const formatDisplayText = text => {
-    const stop = `Arrêt: ${Stop}.\n`;
-    const destinationPasses = text
-      .map(nextPass =>
-        nextPass
-          .map(destinationText => {
-            const [[destinationName, destinationNextPasses]] = Object.entries(
-              destinationText
-            );
-            return `Destination ${destinationName}: ${destinationNextPasses.join(
-              ", "
-            )}.`;
-          })
-          .join("\n\n")
-      )
-      .join("\n\n");
-    return stop + destinationPasses;
-  };
+  const { Stop, Line } = agent.parameters;
 
   try {
-    let transportString = "TBC";
-    const lineDict = { "59": "A", "60": "B", "61": "C", "62": "D" };
-    if (Object.keys(lineDict).includes(Line)) {
-      transportString = "TBT";
-    }
+    const transportString = getTransportStringForLine(Line);
 
-    const res = await TBMClient.getLine(`line:${transportString}:${Line}`);
-    const { routes } = res;
-    let codeNumber = Line;
-    if (Object.keys(lineDict).includes(Line)) {
-      codeNumber = lineDict[Line];
-    }
-    const stops = routes.reduce((stops, route) => {
-      const stopPoints = route.stopPoints.filter(stopPoints => {
-        const stopRegex = new RegExp(`.*${Stop}.*`, "i");
-        return stopRegex.test(stopPoints.name);
-      });
-      stops.push(...stopPoints);
-      return stops;
-    }, []);
-    const nextPassPromises = stops.map(async stop => {
-      const characterIndex = stop.id.lastIndexOf(":");
-      const id = stop.id.substring(characterIndex + 1);
-      return await TBMClient.nextPass(id, codeNumber);
-    });
-    const nextPass = await Promise.all(nextPassPromises);
-    const nextPassesValues = Object.values(nextPass).reduce(
-      (nextPasses, currentNextPass) => {
-        const currentNextPassValues = Object.values(currentNextPass);
-        if (currentNextPassValues.length === 0) {
-          return nextPasses;
-        }
-        const infoDestinations = currentNextPassValues.map(
-          destinationNextPass =>
-            destinationNextPass.reduce((info, nextPassInfo) => {
-              const { destinationName, waitTimeText } = nextPassInfo;
-              if (info[destinationName]) {
-                info[destinationName].push(waitTimeText);
-              } else {
-                info[destinationName] = [waitTimeText];
-              }
-              return info;
-            }, {})
-        );
-        nextPasses.push(infoDestinations);
-        return nextPasses;
-      },
-      []
+    const lineStops = await TBMClient.getLine(
+      `line:${transportString}:${Line}`
     );
+    const { routes } = lineStops;
+    const stops = getStopsFromRoutes(routes, Stop);
 
-    if (nextPassesValues.length === 0) {
-      agent.add(
+    if (stops.length === 0) {
+      return agent.end(`Il n'y a pas d'arret ${Stop} sur la ligne ${Line}.`);
+    }
+
+    const nextPassages = await getNextPassagesFromStops(Line, stops);
+
+    if (nextPassages.length === 0) {
+      return agent.end(
         `Les prochains passages à l'arret ${Stop} ne sont pas disponibles.`
       );
     }
@@ -111,8 +135,8 @@ async function handleNextPassFromStop(agent) {
         items: [
           {
             simpleResponse: {
-              textToSpeech: formatTextToSpeech(nextPassesValues),
-              displayText: formatDisplayText(nextPassesValues)
+              textToSpeech: formatTextToSpeech(nextPassages, Stop),
+              displayText: formatDisplayText(nextPassages, Stop)
             }
           }
         ]
